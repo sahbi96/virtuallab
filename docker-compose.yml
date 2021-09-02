@@ -1,0 +1,219 @@
+version: "3.2"
+services:
+  redis:
+    container_name: virtualredis
+    image: redis:6.0.9-alpine
+    command: redis-server --requirepass yourpassword
+    restart: always
+    ports: 
+       - 6379:6379
+  postgresql:
+    container_name: postgresql
+    image: postgres
+    shm_size: "2gb"
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+        reservations:
+          memory: 100M
+    volumes:
+      - postgresql_db:/var/lib/postgresql/data
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1   
+    environment:
+      - POSTGRES_DB=virtuallabdb
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=root
+    restart: always
+    ports:
+      - "5432:5432"
+
+  es:
+    image: elasticsearch:7.11.1 
+    restart: always
+    container_name: es
+    environment:
+        - discovery.type=single-node
+        - "ES_JAVA_OPTS=-Xms256m -Xmx256m"
+        - http.cors.enabled=true
+        - http.cors.allow-origin=*
+      
+    volumes:
+        - esdata:/usr/share/elasticsearch/data  
+    
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 50M    
+    ulimits:
+        memlock:
+          soft: -1
+          hard: -1   
+        
+    ports:
+        - "9200:9200"      
+      
+
+  backend:
+    container_name: backend
+    restart: always
+    build: ./Backend
+    stdin_open: true
+    ulimits:
+      memlock:
+         soft: -1
+         hard: -1
+       
+    tty: true
+    environment: 
+        - DJANGO_CONFIGURATION=Dev
+        - DJANGO_DATABASE=Prod
+        - POSTGRES_HOST=5.196.28.91
+        - POSTGRES_PORT=5432
+        - DJANGO_HOST=http://5.196.28.91:8000/
+        - ELASTIC_HOST=5.196.28.91:9200
+        - API_ENRICH_HOST=http://5.196.28.91:5200/enrich/
+        - API_RECOMMENDED_SYSTEM_HOST=http://5.196.28.91:6200/add_new/
+        - API_SKILLS_HOST=http://5.196.28.91:7200/add_new/
+        - API_TRANS_HOST=http://5.196.28.91:5200/trans/
+
+        - API_SKILLS_PREDICT=http://5.196.28.91:7200/predict_to_user/
+        - API_RECOMMENDED_PREDICT=http://5.196.28.91:6200/predict_to_user/
+
+        - API_SKILLS_UPDATE=http://5.196.28.91:7200/update_model/
+        - API_RECOMMENDED_UPDATE=http://5.196.28.91:6200/update_model/
+
+
+        - CELERY_BROKER=redis://user:yourpassword@5.196.28.91:6379
+        - CELERY_BACKEND=redis://user:yourpassword@5.196.28.91:6379
+
+    links:
+        - postgresql
+        - redis 
+    volumes:
+        - media:/home/Backend/
+
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgresql
+      - es
+      - redis
+
+    command: >
+      sh -c " sleep 60 &&
+      python manage.py makemigrations &&
+      python manage.py migrate &&
+      python manage.py search_index  --rebuild -f &&
+      python manage.py runserver  0.0.0.0:8000"
+  
+
+
+  celery:
+    restart: always
+    build: ./Backend
+    stdin_open: true
+    ulimits:
+      memlock:
+          soft: -1
+          hard: -1
+   
+    tty: true
+    environment: 
+        - DJANGO_CONFIGURATION=Dev
+        - DJANGO_DATABASE=Prod
+        - POSTGRES_HOST=5.196.28.91
+        - POSTGRES_PORT=5432
+        - DJANGO_HOST=http://5.196.28.91:8000/
+        - ELASTIC_HOST=5.196.28.91:9200
+        - API_ENRICH_HOST=http://5.196.28.91:5200/enrich/
+        - API_RECOMMENDED_SYSTEM_HOST=http://5.196.28.91:6200/add_new/
+        - API_SKILLS_HOST=http://5.196.28.91:7200/add_new/
+        - API_TRANS_HOST=http://5.196.28.91:5200/trans/
+        
+        - API_SKILLS_PREDICT=http://5.196.28.91:7200/predict_to_user/
+        - API_RECOMMENDED_PREDICT=http://5.196.28.91:6200/predict_to_user/
+
+        - API_SKILLS_UPDATE=http://5.196.28.91:7200/update_model/
+        - API_RECOMMENDED_UPDATE=http://5.196.28.91:6200/update_model/
+
+        - CELERY_BROKER=redis://user:yourpassword@5.196.28.91:6379
+        - CELERY_BACKEND=redis://user:yourpassword@5.196.28.91:6379
+
+    links:
+        - postgresql 
+        - redis
+    volumes:
+        - media:/home/Backend/
+
+    depends_on:
+      - postgresql
+      - es
+      - backend
+      - redis
+
+    command: celery -A Backend worker -l info -B 
+
+  # frontend:
+  #   container_name: frontend
+  #   build: ./Frontend
+  #   volumes:
+  #     - ./Frontend:/app
+
+  #     - /app/node_modules
+  #   ports:
+  #     - "4000:4000"
+
+  #   depends_on:
+  #     - backend
+  #   command: ng serve  --host 0.0.0.0 --port=4000 --prod
+  
+  fast_api_enrich:
+    container_name: fast_api_enrich
+    build: ./Fast Api Enrich Formation
+    volumes:
+      - ./Fast Api Enrich Formation:/app
+
+    ports:
+      - "5200:5200"
+
+
+    depends_on:
+      - backend
+    command: uvicorn  main:app  --host 0.0.0.0 --port 5200 
+  
+  fast_api_recommended_system:
+    container_name: fast_api_recommended_system
+    build: ./Fast Api Model Recommended System
+    volumes:
+      - ./Fast Api Model Recommended System:/app
+
+    ports:
+      - "6200:6200"
+
+
+    depends_on:
+      - backend
+    command: uvicorn  main:app  --host 0.0.0.0 --port 6200
+  
+  fast_api_skills_classification:
+    container_name: fast_api_skills_classification
+    build: ./Fast Api Model Skills
+    volumes:
+      - ./Fast Api Model Skills:/app
+    ports:
+      - "7200:7200"
+
+    depends_on:
+      - backend
+    command: uvicorn  main:app  --host 0.0.0.0 --port 7200  
+ 
+volumes:
+  postgresql_db:
+  media:
+  esdata:

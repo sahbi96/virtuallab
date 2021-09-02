@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+python-multipart
+beautifulsoup4
+googletrans==4.0.0rc1
+nltk
